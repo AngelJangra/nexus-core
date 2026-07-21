@@ -20,6 +20,7 @@ if (supabaseUrl && supabaseKey) {
 //  MAIN HANDLER
 // ============================================================
 module.exports = async (req, res) => {
+    // Set CORS and content type
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -66,7 +67,7 @@ module.exports = async (req, res) => {
     }
 
     // Test bucket
-    if (supabase) {
+    if (supabase && results.supabase.status === '✅') {
         try {
             const { data: buckets, error } = await supabase.storage.listBuckets();
             if (!error) {
@@ -154,7 +155,6 @@ module.exports = async (req, res) => {
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Header */
         .header {
             display: flex;
             justify-content: space-between;
@@ -196,10 +196,9 @@ module.exports = async (req, res) => {
 
         .header .time { color: #4a6a7a; font-size: 13px; font-family: 'Courier New', monospace; }
 
-        /* Grid */
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
             gap: 16px;
             margin-bottom: 20px;
         }
@@ -217,10 +216,8 @@ module.exports = async (req, res) => {
         .card .value .icon { font-size: 20px; }
         .card .sub { font-size: 12px; color: #4a6a7a; margin-top: 4px; }
 
-        /* Full-width cards */
         .card-full { grid-column: 1 / -1; }
 
-        /* Table */
         .table-wrap {
             overflow-x: auto;
             margin-top: 6px;
@@ -248,7 +245,6 @@ module.exports = async (req, res) => {
         .table-wrap td .status-icon { font-size: 16px; }
         .table-wrap tr:hover td { background: rgba(255,255,255,0.02); }
 
-        /* Recent activity */
         .activity-item {
             padding: 6px 0;
             border-bottom: 1px solid rgba(42, 42, 68, 0.1);
@@ -262,7 +258,6 @@ module.exports = async (req, res) => {
         .activity-item .time { color: #4a6a7a; font-size: 12px; }
         .activity-item .highlight { color: #88ccff; }
 
-        /* Responsive */
         @media (max-width: 600px) {
             .grid { grid-template-columns: 1fr; }
             .header { flex-direction: column; align-items: stretch; text-align: center; }
@@ -275,6 +270,10 @@ module.exports = async (req, res) => {
         .gap-4 { gap: 4px; }
         .flex { display: flex; align-items: center; }
         .flex-wrap { flex-wrap: wrap; }
+        .footer-text { text-align: center; margin-top: 24px; font-size: 11px; color: #4a4a6a; }
+        .footer-text a { color: #88ccff; text-decoration: none; }
+        .footer-text a:hover { text-decoration: underline; }
+        .code { font-family: 'Courier New', monospace; color: #88ccff; }
     </style>
 </head>
 <body>
@@ -327,9 +326,9 @@ module.exports = async (req, res) => {
         <!-- Recent Activity -->
         <div class="card">
             <div class="label">⚡ Recent Activity</div>
-            <div class="value" style="font-size:14px;font-weight:400;flex-direction:column;align-items:flex-start;gap:2px;">
-                ${results.recent.photo ? `📸 ${new Date(results.recent.photo.timestamp).toLocaleTimeString()}` : 'No photos yet'}
-                ${results.recent.log ? `📋 ${new Date(results.recent.log.timestamp).toLocaleTimeString()}` : ''}
+            <div style="font-size:13px;color:#aab;margin-top:4px;line-height:1.8;">
+                ${results.recent.photo ? `📸 ${new Date(results.recent.photo.timestamp).toLocaleTimeString()}` : 'No photos yet'}<br>
+                ${results.recent.log ? `📋 ${new Date(results.recent.log.timestamp).toLocaleTimeString()}` : ''}<br>
                 ${results.recent.location ? `📍 ${new Date(results.recent.location.timestamp).toLocaleTimeString()}` : ''}
             </div>
         </div>
@@ -344,7 +343,7 @@ module.exports = async (req, res) => {
                 <tbody>
                     ${Object.entries(results.tables).map(([name, status]) => `
                         <tr>
-                            <td><code style="color:#88ccff;">${name}</code></td>
+                            <td><span class="code">${name}</span></td>
                             <td><span class="status-icon">${status === '✅' ? '🟢' : '🔴'}</span> ${status}</td>
                         </tr>
                     `).join('')}
@@ -363,7 +362,7 @@ module.exports = async (req, res) => {
                 <tbody>
                     ${results.sample.devices.map(d => `
                         <tr>
-                            <td><code style="color:#88ccff;">${d.ip || 'unknown'}</code></td>
+                            <td><span class="code">${d.ip || 'unknown'}</span></td>
                             <td>${d.platform || 'unknown'}</td>
                             <td style="color:#4a6a7a;">${new Date(d.last_seen).toLocaleString()}</td>
                         </tr>
@@ -392,8 +391,8 @@ module.exports = async (req, res) => {
     </div>
 
     <!-- FOOTER -->
-    <div style="text-align:center;margin-top:24px;font-size:11px;color:#4a4a6a;">
-        🔐 Dashboard: <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank" style="color:#88ccff;text-decoration:none;">Open Admin Panel</a>
+    <div class="footer-text">
+        🔐 Dashboard: <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank">Open Admin Panel</a>
         &nbsp;·&nbsp; ⚡ C2 Backend v1.0
     </div>
 </div>
