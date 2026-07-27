@@ -1,7 +1,7 @@
 {
-  "name": "c2-vercel-backend",
+  "name": "c2-backend",
   "version": "1.0.0",
-  "description": "C2 backend for Vercel + Supabase",
+  "description": "C2 Backend with Supabase – Modern Status Panel",
   "main": "api/index.js",
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0"
