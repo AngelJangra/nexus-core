@@ -65,6 +65,8 @@ module.exports = async (req, res) => {
         .endpoints{text-align:left;margin-top:24px;padding:16px;background:rgba(11,11,20,0.5);border-radius:16px;border:1px solid rgba(42,42,68,0.3);font-family:'Courier New',monospace;font-size:12px;color:#4a6a7a;line-height:1.8}
         .endpoints .highlight{color:#88ccff}
         .footer{font-size:11px;color:#4a4a6a;margin-top:20px}
+        .credit{text-align:center;color:#4a6a7a;font-size:12px;margin-top:24px;border-top:1px solid rgba(42,42,68,0.2);padding-top:16px}
+        .credit span{color:#f7971e;font-weight:600}
     </style>
 </head>
 <body>
@@ -99,6 +101,10 @@ module.exports = async (req, res) => {
     </div>
 
     <p class="footer">🔐 Dashboard is password protected.</p>
+
+    <div class="credit">
+        Made with ❤️ by <span>AJ</span>
+    </div>
 </div>
 </body>
 </html>
@@ -292,6 +298,8 @@ module.exports = async (req, res) => {
         .footer-text a { color: #88ccff; text-decoration: none; }
         .footer-text a:hover { text-decoration: underline; }
         .code { font-family: 'Courier New', monospace; color: #88ccff; }
+        .credit { text-align:center; color:#4a6a7a; font-size:11px; margin-top:24px; border-top:1px solid rgba(42,42,68,0.2); padding-top:14px; }
+        .credit span { color:#f7971e; font-weight:600; }
         @media (max-width: 600px) {
             .grid { grid-template-columns: 1fr; }
             .header { flex-direction: column; align-items: stretch; text-align: center; }
@@ -409,6 +417,10 @@ module.exports = async (req, res) => {
     <div class="footer-text">
         🔐 Dashboard: <a href="https://angeljangra.github.io/nexus-dashboard/nexus.html" target="_blank">Open Admin Panel</a>
         &nbsp;·&nbsp; ⚡ Nexus Core v2.0
+    </div>
+
+    <div class="credit">
+        Made with ❤️ by <span>AJ</span>
     </div>
 </div>
 </body>
