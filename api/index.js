@@ -93,7 +93,8 @@ module.exports = async (req, res) => {
         <div><span class="highlight">POST</span> /api/update-device — Update device notes</div>
         <div><span class="highlight">GET</span> /api/devices — List devices</div>
         <div><span class="highlight">GET</span> /api/device-details?deviceId=xxx — Full details</div>
-        <div><span class="highlight">GET</span> /api/photos?deviceId=xxx — Get photos</div>
+        <div><span class="highlight">GET</span> /api/photos?deviceId=xxx — Get photos (JSON)</div>
+        <div><span class="highlight">GET</span> /api/photos-gallery?deviceId=xxx — Photo gallery (HTML)</div>
         <div><span class="highlight">GET</span> /api/logs?deviceId=xxx — Get logs</div>
         <div><span class="highlight">GET</span> /api/locations?deviceId=xxx — Get locations</div>
         <div><span class="highlight">GET</span> /api/health — JSON health check</div>
@@ -407,6 +408,7 @@ module.exports = async (req, res) => {
             <div><span style="color:#6fcf97;">GET</span> /api/devices</div>
             <div><span style="color:#6fcf97;">GET</span> /api/device-details?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/photos?deviceId=xxx</div>
+            <div><span style="color:#6fcf97;">GET</span> /api/photos-gallery?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/logs?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/locations?deviceId=xxx</div>
             <div><span style="color:#6fcf97;">GET</span> /api/health</div>
@@ -608,7 +610,7 @@ module.exports = async (req, res) => {
     }
 
     // ============================================================
-    //  GET PHOTOS
+    //  GET PHOTOS (JSON)
     // ============================================================
     if (path === '/api/photos' && req.method === 'GET') {
         if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
@@ -617,6 +619,229 @@ module.exports = async (req, res) => {
         const { data, error } = await supabase.from('photos').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false });
         if (error) return res.status(500).json({ error: error.message });
         return res.json(data.map(p => { if (p.storage_path) { const { data: urlData } = supabase.storage.from('photos').getPublicUrl(p.storage_path); return { ...p, publicUrl: urlData?.publicUrl || null }; } return p; }));
+    }
+
+    // ============================================================
+    //  PHOTO GALLERY – HTML page (nice display)
+    // ============================================================
+    if (path === '/api/photos-gallery' && req.method === 'GET') {
+        if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+        const deviceId = url.searchParams.get('deviceId');
+        if (!deviceId) return res.status(400).json({ error: 'Missing deviceId' });
+
+        const { data, error } = await supabase.from('photos').select('*').eq('device_id', deviceId).order('timestamp', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+
+        // Generate public URLs
+        const photos = data.map(p => {
+            if (p.storage_path) {
+                const { data: urlData } = supabase.storage.from('photos').getPublicUrl(p.storage_path);
+                return { ...p, publicUrl: urlData?.publicUrl || null };
+            }
+            return p;
+        });
+
+        let html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photos – Device ${deviceId}</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: #0a0a12;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 24px;
+            min-height: 100vh;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding: 16px 24px;
+            background: rgba(20,20,31,0.5);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            border: 1px solid rgba(42,42,68,0.3);
+        }
+        .header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #f7971e, #ffd200);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .back-btn {
+            padding: 8px 20px;
+            border-radius: 60px;
+            border: 1px solid rgba(42,42,68,0.3);
+            background: rgba(42,42,68,0.4);
+            color: #e0e0e0;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .header .back-btn:hover {
+            border-color: #f7971e;
+            background: rgba(58,58,90,0.8);
+        }
+        .header .count {
+            color: #4a6a7a;
+            font-size: 14px;
+        }
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 16px;
+        }
+        .photo-card {
+            background: rgba(20,20,31,0.5);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(42,42,68,0.3);
+            transition: all 0.3s ease;
+        }
+        .photo-card:hover {
+            border-color: rgba(247,151,30,0.3);
+            transform: translateY(-4px);
+            box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+        }
+        .photo-card img {
+            width: 100%;
+            height: 220px;
+            object-fit: cover;
+            display: block;
+            cursor: pointer;
+        }
+        .photo-card .info {
+            padding: 12px 16px;
+            font-size: 12px;
+            color: #8a8aaa;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .photo-card .info .camera {
+            background: rgba(42,42,68,0.3);
+            padding: 2px 12px;
+            border-radius: 30px;
+            font-size: 10px;
+            font-weight: 600;
+            color: #88ccff;
+        }
+        .photo-card .info .time {
+            color: #4a6a7a;
+        }
+        .no-photos {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 60px 20px;
+            color: #4a6a7a;
+            font-size: 18px;
+        }
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.9);
+            backdrop-filter: blur(10px);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            cursor: pointer;
+        }
+        .lightbox.open { display: flex; }
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+        }
+        .credit {
+            text-align: center;
+            color: #4a6a7a;
+            font-size: 11px;
+            margin-top: 32px;
+            border-top: 1px solid rgba(42,42,68,0.2);
+            padding-top: 16px;
+        }
+        .credit span { color: #f7971e; font-weight: 600; }
+        @media (max-width: 600px) {
+            .gallery { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+            .photo-card img { height: 150px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>📸 Photos</h1>
+        <div>
+            <span class="count">${photos.length} images</span>
+            <a href="javascript:history.back()" class="back-btn">← Back</a>
+        </div>
+    </div>
+    <div class="gallery">`;
+
+        if (photos.length === 0) {
+            html += `<div class="no-photos">📷 No photos found for this device.</div>`;
+        } else {
+            for (const p of photos) {
+                const url = p.publicUrl || p.file_path || '#';
+                const time = new Date(p.timestamp).toLocaleString();
+                const cam = p.camera || 'unknown';
+                html += `
+        <div class="photo-card">
+            <img src="${url}" alt="Photo" onclick="openLightbox('${url}')" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22250%22 height=%22220%22%3E%3Crect fill=%22%231a1a2e%22 width=%22250%22 height=%22220%22/%3E%3Ctext x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%234a6a7a%22 font-family=%22sans-serif%22 font-size=%2214%22%3E⚠️ Failed to load%3C/text%3E%3C/svg%3E'">
+            <div class="info">
+                <span class="camera">📷 ${cam}</span>
+                <span class="time">🕒 ${time}</span>
+            </div>
+        </div>`;
+            }
+        }
+
+        html += `
+    </div>
+    <div class="credit">
+        Made with ❤️ by <span>AJ</span>
+    </div>
+</div>
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <img id="lightboxImg" src="" alt="Full view">
+</div>
+<script>
+    function openLightbox(url) {
+        document.getElementById('lightboxImg').src = url;
+        document.getElementById('lightbox').classList.add('open');
+    }
+    function closeLightbox() {
+        document.getElementById('lightbox').classList.remove('open');
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLightbox();
+    });
+</script>
+</body>
+</html>`;
+
+        return res.setHeader('Content-Type', 'text/html; charset=utf-8').status(200).send(html);
     }
 
     // ============================================================
