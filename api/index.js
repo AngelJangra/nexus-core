@@ -73,7 +73,7 @@ module.exports = async (req, res) => {
     <h1>Nexus Core</h1>
     <p class="sub">Your central command & control server is running.</p>
 
-    <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank" class="btn">
+    <a href="https://angeljangra.github.io/nexus-dashboard/nexus.html" target="_blank" class="btn">
         📊 Open Dashboard
     </a>
     <br>
@@ -407,7 +407,7 @@ module.exports = async (req, res) => {
     </div>
 
     <div class="footer-text">
-        🔐 Dashboard: <a href="https://angeljangra.github.io/dashboard/dashboard.html" target="_blank">Open Admin Panel</a>
+        🔐 Dashboard: <a href="https://angeljangra.github.io/nexus-dashboard/nexus.html" target="_blank">Open Admin Panel</a>
         &nbsp;·&nbsp; ⚡ Nexus Core v2.0
     </div>
 </div>
